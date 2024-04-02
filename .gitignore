@@ -1,0 +1,10 @@
+.env
+*.sh
+*.org
+*.pprof
+*.svg
+**/*.sh
+**/*.org
+**/*.pprof
+**/.env
+**/*.svg
