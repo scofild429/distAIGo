@@ -118,9 +118,7 @@ func Train(newComm *mpi.Communicator, m *Model, module godl.Module, trainX, trai
 
 	m.evalGraph = validationGraph
 
-	vmOpts := []gorgonia.VMOpt{
-		gorgonia.BindDualValues(m.learnables...),
-	}
+	vmOpts := []gorgonia.VMOpt{}
 
 	if opts.DevMode {
 		vmOpts = append(
@@ -182,21 +180,22 @@ func Train(newComm *mpi.Communicator, m *Model, module godl.Module, trainX, trai
 
 		///////////////////////////////////////////////////////////
 		for index, item := range m.learnables {
-			weight := item.Value().Data().([]float64)
+			weight := item.Value().Data().([]float32)
 			end := WeightsLengthArray[index]
 			if index == 0 {
 				for i := 0; i < end; i++ {
-					Weightscomposed[i] = weight[i]
+					Weightscomposed[i] = float64(weight[i])
 				}
 			} else {
 				for i := 0; i < end; i++ {
-					Weightscomposed[WeightsLengthAccu[index-1]+i] = weight[i]
+					Weightscomposed[WeightsLengthAccu[index-1]+i] = float64(weight[i])
 				}
 			}
 		}
 		/////////////////////////////////////////////////////////////
 		newComm.SendFloat64s(Weightscomposed, 0, newComm.Rank())
 		Weightscomposed, _ = newComm.RecvFloat64s(0, newComm.Rank())
+		loadWeightsIntoModel(m)
 
 		dl.Reset()
 

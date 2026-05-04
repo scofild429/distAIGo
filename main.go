@@ -77,19 +77,18 @@ func main() {
 	fmt.Println("WeightsLengthArray", WeightsLengthArray, "has lenght of ", len(WeightsLengthArray))
 	fmt.Println("WeightsLengthAccu", WeightsLengthAccu, "has lenght of ", len(WeightsLengthAccu))
 
-	Weightscomposed = make([]float64, WeightsLengthSum)
+	Weightscomposed = make([]float64, 0, WeightsLengthSum)
 	for _, item := range m.learnables {
 		val := item.Value().Data().([]float32)
-		val64 := []float64{}
-		for i, _ := range val {
-			val64 = append(val64, float64(val[i]))
+		for _, v := range val {
+			Weightscomposed = append(Weightscomposed, float64(v))
 		}
-		Weightscomposed = append(Weightscomposed, val64...)
 	}
-	fmt.Println("BcastFloat32s from main process to work process!")
+	fmt.Println("BcastFloat32s: broadcasting initial weights to all workers")
 	newComm.BcastFloat64s(Weightscomposed, 0)
 
 	if newComm.Rank() != 0 {
+		loadWeightsIntoModel(m)
 		// resNet = RestNet(m, options)
 
 		LoadingLabel(labelDir)
@@ -134,9 +133,7 @@ func main() {
 
 		m.evalGraph = validationGraph
 
-		vmOpts := []gorgonia.VMOpt{
-			gorgonia.BindDualValues(m.learnables...),
-		}
+		vmOpts := []gorgonia.VMOpt{}
 
 		if opts.DevMode {
 			vmOpts = append(
@@ -215,10 +212,11 @@ func main() {
 				}
 			}
 			/////////////////////////////////////////////////////////////
-			fmt.Println("SendFloat32s: work process send to main process")
+			fmt.Println("SendFloat64s: worker sending weights to master")
 			newComm.SendFloat64s(Weightscomposed, 0, newComm.Rank())
-			fmt.Println("RecvFloat32s: work process waits from main process")
-			_, _ = newComm.RecvFloat64s(0, newComm.Rank())
+			fmt.Println("RecvFloat64s: worker receiving averaged weights from master")
+			Weightscomposed, _ = newComm.RecvFloat64s(0, newComm.Rank())
+			loadWeightsIntoModel(m)
 
 			dl.Reset()
 
@@ -238,20 +236,30 @@ func main() {
 	}
 
 	if newComm.Rank() == 0 {
-		for j := range parallelism - 1 {
-			go func() {
-				for {
-					fmt.Println("RecvFloat32s: Main process receive from work process")
-					recivedWeights, _ := newComm.RecvFloat64s(j+1, j+1)
-					for i, _ := range recivedWeights {
-						Weightscomposed[i] += recivedWeights[i]
-						Weightscomposed[i] /= 2
-					}
-					fmt.Println("SendFloat32s: Main send to work process")
-					newComm.SendFloat64s(Weightscomposed, j+1, j+1)
+		epochs, _ := strconv.Atoi(os.Getenv("epoches"))
+		numWorkers := parallelism - 1
+
+		for epoch := 0; epoch < epochs; epoch++ {
+			workerWeights := make([][]float64, numWorkers)
+			for w := 0; w < numWorkers; w++ {
+				fmt.Printf("RecvFloat64s: master receiving weights from worker %d (epoch %d)\n", w+1, epoch)
+				workerWeights[w], _ = newComm.RecvFloat64s(w+1, w+1)
+			}
+
+			for i := range Weightscomposed {
+				sum := 0.0
+				for w := 0; w < numWorkers; w++ {
+					sum += workerWeights[w][i]
 				}
-			}()
+				Weightscomposed[i] = sum / float64(numWorkers)
+			}
+
+			for w := 0; w < numWorkers; w++ {
+				fmt.Printf("SendFloat64s: master sending averaged weights to worker %d (epoch %d)\n", w+1, epoch)
+				newComm.SendFloat64s(Weightscomposed, w+1, w+1)
+			}
 		}
+		fmt.Println("Master: all epochs completed, shutting down")
 	}
 	mpi.Stop()
 }

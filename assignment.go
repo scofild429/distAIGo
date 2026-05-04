@@ -33,6 +33,21 @@ func Weightscomposing(index int, weigt []float64) {
 	}
 }
 
+func loadWeightsIntoModel(m *Model) {
+	for index, item := range m.learnables {
+		start := 0
+		if index > 0 {
+			start = WeightsLengthAccu[index-1]
+		}
+		weightSlice := Weightscomposed[start : start+WeightsLengthArray[index]]
+
+		backing := item.Value().Data().([]float32)
+		for i := range backing {
+			backing[i] = float32(weightSlice[i])
+		}
+	}
+}
+
 func ValuesOfArray() gorgonia.InitWFn {
 	f := func(dt tensor.Dtype, s ...int) interface{} {
 		weight := weight()
